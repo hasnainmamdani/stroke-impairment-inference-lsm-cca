@@ -17,7 +17,6 @@ def get_mni_mask(reference_img):
 
 
 def get_binary_lesion_imgs(data_dir):
-    print("heyyy")
 
     if not os.path.isfile(data_dir + "binary_imgs.npy"):
 
@@ -132,7 +131,7 @@ def main():
     lesion_imgs = get_binary_lesion_imgs(DATA_DIR)
     print("lesion data loaded:", lesion_imgs.shape)
 
-    reference_img = load_img(DATA_DIR + "stroke-dataset/HallymBundang_lesionmaps_24032020/1001.nii.gz")
+    reference_img = load_img(DATA_DIR + "stroke-dataset/HallymBundang_lesionmaps_n1432_24032020/1001.nii.gz")
 
     lesion_load_matrix, region_labels = create_lesion_load_matrix(DATA_DIR, lesion_imgs, reference_img, True)
 

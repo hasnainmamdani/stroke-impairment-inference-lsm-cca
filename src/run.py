@@ -308,30 +308,36 @@ def normalize_scores(Y, zscore):
 def get_mni_mask(reference_img):
     mask_img = load_mni152_brain_mask()
     mask_img_resampled = resample_to_img(mask_img, reference_img, interpolation="linear")
-    mask = np.where(
-        mask_img_resampled.get_fdata() == 1)  # Not using NiftiMasker because it takes too long and too much memory to transform.
+    mask = np.where(mask_img_resampled.get_fdata() == 1)  # Not using NiftiMasker because it takes too long and too much memory to transform.
+    mask = np.where(mask_img_resampled.get_fdata() == 1)  # Not using NiftiMasker because it takes too long and too much memory to transform.
 
     return mask
 
 
-def plot_loadings_to_brain(data_dir, atlas_labels_filename, loadings, zscore=False, filtered_rois=None):
-
+def plot_loadings_to_brain_niftis(data_dir, atlas_labels_filename, loadings, zscore=False, filtered_rois=None):
+    """
+    Map CCA loadings for all modes to brain regions based on provided atlas and generate corresponding niftis
+    """
+    # actual sign of loadings matter so better to not z-score
     if zscore:
         loadings = StandardScaler().fit_transform(loadings)
 
-    reference_img = load_img(data_dir + "stroke-dataset/HallymBundang_lesionmaps_24032020/1001.nii.gz")
+    reference_img = load_img(data_dir + "stroke-dataset/HallymBundang_lesionmaps_n1432_24032020/1001.nii.gz")
     mask_idx = get_mni_mask(reference_img)
     roi_names = np.load(data_dir + atlas_labels_filename)
 
     if filtered_rois is not None:
         roi_names = roi_names[filtered_rois]
+    print("rois:", len(roi_names))
 
     atlas_all_vectorized, labels_all = get_vectorized_atlas_data(data_dir)
 
     for i_mode in range(loadings.shape[1]):
-        loadings_on_mni_vectorized = roi_to_voxels(atlas_all_vectorized, labels_all, roi_names, loadings[:, i_mode])
 
-        #  combine all atlases
+        loadings_on_mni_vectorized = map_cca_loadings_to_brain_voxels(atlas_all_vectorized, labels_all, roi_names,
+                                                                      loadings[:, i_mode])
+
+        #  combine both gray and white matter loadings
         nifti_data_vectorized = np.apply_along_axis(resolve_overlap, axis=0, arr=loadings_on_mni_vectorized)
 
         nifti_data = np.zeros(reference_img.shape)
@@ -342,6 +348,10 @@ def plot_loadings_to_brain(data_dir, atlas_labels_filename, loadings, zscore=Fal
 
 
 def resolve_overlap(values):
+    """
+    Calculates the highest value > 0 if exists otherwise highest absolute value
+    :param values: list of numbers
+    """
     min_value = np.min(values)
     max_value = np.max(values)
 
@@ -364,7 +374,7 @@ def create_niftis_from_lesion_maps(recons_brain_region_lesion_volumes, data_dir,
                                    smooth_image=False, smooth_fwhm=10):
     # recons_brain_map.shape == (3, 1154, 161)
 
-    reference_img = load_img(data_dir + "stroke-dataset/HallymBundang_lesionmaps_Bzdok_n1401/1001.nii.gz")
+    reference_img = load_img(data_dir + "stroke-dataset/HallymBundang_lesionmaps_n1432_24032020/1001.nii.gz")
     mask_idx = get_mni_mask(reference_img)
     roi_names = np.load(data_dir + atlas_labels_filename)
 
@@ -374,8 +384,8 @@ def create_niftis_from_lesion_maps(recons_brain_region_lesion_volumes, data_dir,
 
         for i_patient in range(recons_brain_region_lesion_volumes.shape[1]):
 
-            loadings_on_mni_vectorized = roi_to_voxels(atlas_all_vectorized, labels_all, roi_names,
-                                                       recons_brain_region_lesion_volumes[i_mode][i_patient])
+            loadings_on_mni_vectorized = map_cca_loadings_to_brain_voxels(atlas_all_vectorized, labels_all, roi_names,
+                                                                          recons_brain_region_lesion_volumes[i_mode][i_patient])
 
             #  plot back to brain space
             nifti_data_vectorized = np.apply_along_axis(resolve_overlap, axis=0, arr=loadings_on_mni_vectorized)
@@ -392,7 +402,16 @@ def create_niftis_from_lesion_maps(recons_brain_region_lesion_volumes, data_dir,
                  ("_smooth_" + str(smooth_fwhm) if smooth_image else "") + ".nii.gz")
 
 
-def roi_to_voxels(atlas_all_vectorized, labels_all, roi_names, roi_values):
+def map_cca_loadings_to_brain_voxels(atlas_all_vectorized, labels_all, roi_names, roi_values):
+    """
+    Assign/map loading values to corresponding brain regions (for all the voxels in the region).
+
+    :param atlas_all_vectorized: Vectorized atlases for gray and white matter regions
+    :param labels_all: Names of regions for all gray and white matter regions
+    :param roi_names: Names of regions used in the analysis
+    :param roi_values: Values to be assigned for brain regions. Obtained from CCA analysis
+    :return: Vectorized versions of loading mapped to brain regions, for gray and white matter separately.
+    """
     loadings_on_mni_vectorized = np.zeros(
         (len(atlas_all_vectorized), len(atlas_all_vectorized[0])))  # 2 x 1862781 (one for each atlas)
 
@@ -416,6 +435,12 @@ def roi_to_voxels(atlas_all_vectorized, labels_all, roi_names, roi_values):
 
 
 def get_vectorized_atlas_data(data_dir):
+    """
+    Returns the vectorized versions (a separate number for each region) of both atlases, grey (combined)
+    and white matter, along with the relevant label names
+    :return: atlas_all_vectorized: len = 2 (x 1862781)
+            labels_all: len = 2 (1 x 114 + 1 x 51)
+    """
     atlas_dir = data_dir + "atlas/by_nick_01102020/processed/"
 
     atlas_ho_cort_subcort_cereb_vectorized = np.load(atlas_dir + "ho_cort_subcort_cereb_combined_atlas_vectorized.npy")
@@ -499,14 +524,16 @@ def main(args):
     else:
         cca = CCA(n_components=args.n_components, scale=False).fit(X_upd, Y_upd)
 
+    # cca.x_loadings_.shape = (49, 4), cca.y_loadings_.shape = (4, 4)
+    # x_loadings.shape = (49, 4), y_loadings.shape = (4, 4)
     x_loadings, y_loadings = fix_directionality(cca.x_loadings_, cca.y_loadings_)
 
     plot_cca_loadings(x_loadings, y_loadings, data_dir + atlas_labels_filename, filtered_rois_idx)
 
-    # plot_cca_component_comparison(cca)
-    #
-    # plot_loadings_to_brain(data_dir, atlas_labels_filename, x_loadings, zscore=False, filtered_rois=filtered_rois_idx)
-    #
+    plot_cca_component_comparison(cca)
+
+    plot_loadings_to_brain_niftis(data_dir, atlas_labels_filename, x_loadings, zscore=False, filtered_rois=filtered_rois_idx)
+
     # permutation_test(cca, X_upd, Y_upd)
     #
     # recons_brain_region_lesion_volumes = create_modewise_brain_maps(cca.x_scores_, cca.x_loadings_)  # (3, 1154, 161)
@@ -521,7 +548,7 @@ if __name__ == "__main__":
     parser.add_argument("--atlas_labels_filename", default="llm/cca/combined_atlas_region_labels_05102020.npy")
 
     parser.add_argument("--use_pc100", default=False)  # False for atlas ROI lesion load matrix
-    parser.add_argument("--use_select_rois", default=True)  # whether to only use select ROIs provided by SVR-ROI analysis
+    parser.add_argument("--use_select_rois", default=False)  # whether to only use select ROIs provided by SVR-ROI analysis
     parser.add_argument("--deconfounded_by_colabs", default=True)  # whether to use already deconfounded data from collaborators
     parser.add_argument("--also_deconfound_infarct_volume", default=False)
     parser.add_argument("--r_cca", default=False)  # whether to use RCCA or otherwise sklearn's CCA
