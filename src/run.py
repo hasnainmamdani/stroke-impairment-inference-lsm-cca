@@ -127,12 +127,7 @@ def deconfound(language_behaviour_data_file, data):
     return data_deconf
 
 
-def plot_cca_loadings(x_loadings, y_loadings, atlas_labels_filepath, filtered_rois=None):
-
-    roi_names = np.load(atlas_labels_filepath)
-
-    if filtered_rois is not None:
-        roi_names = roi_names[filtered_rois]
+def plot_cca_loadings(x_loadings, y_loadings, roi_names):
 
     language_score_names = ["SVLT Immediate Recall", "SVLT Delayed Recall", "SVLT Recognition", "SVLT Learning Curve"]
 
@@ -472,6 +467,54 @@ def fix_directionality(x_loadings, y_loadings):
     return x_loadings, y_loadings
 
 
+def random_permutation_roi_pvalue(x_loadings, X, Y, roi_names):
+
+    n_comp = x_loadings.shape[1]
+    n_permutations = 1000
+    perm_rs = np.random.RandomState(72)
+    x_loadings_perm = []
+
+    for i_iter in range(n_permutations):
+        if i_iter % 50 == 0:
+            print(i_iter + 1)
+
+        # permuting each language score / column
+        Y_perm = np.empty(Y.shape)
+        for i in range(n_comp):
+            Y_perm[:, i] = perm_rs.permutation(Y[:, i])
+
+        cca_perm = CCA(n_components=n_comp, scale=False).fit(X, Y_perm)
+
+        x_loadings_perm.append(cca_perm.x_loadings_)
+
+    x_loadings_perm = np.array(x_loadings_perm)
+    pvals = np.empty(x_loadings.shape)
+
+    for i_roi in range(x_loadings.shape[0]):
+
+        for i_mode in range(x_loadings.shape[1]):
+
+            target_weight = x_loadings[i_roi, i_mode]
+
+            if target_weight > 0:
+                pvals[i_roi, i_mode] = np.count_nonzero(x_loadings_perm[:, i_roi, i_mode] >= target_weight) / n_permutations
+            else:
+                pvals[i_roi, i_mode] = np.count_nonzero(x_loadings_perm[:, i_roi, i_mode] <= target_weight) / n_permutations
+
+    writer = pd.ExcelWriter("p_values.xlsx")
+
+    roi_df = pd.DataFrame(roi_names, columns=["ROI"])
+    for i_mode in range(pvals.shape[1]):
+        roi_df["Mode " + str(i_mode + 1)] = pvals[:, i_mode]
+    roi_df.index += 1
+    roi_df.to_excel(writer)
+
+    writer.save()
+    writer.close()
+
+    return pvals
+
+
 def main(args):
 
     print(args)
@@ -524,18 +567,24 @@ def main(args):
     else:
         cca = CCA(n_components=args.n_components, scale=False).fit(X_upd, Y_upd)
 
-    # cca.x_loadings_.shape = (49, 4), cca.y_loadings_.shape = (4, 4)
+    roi_names = np.load(data_dir + atlas_labels_filename)
+    if filtered_rois_idx is not None:
+        roi_names = roi_names[filtered_rois_idx]
+
+    # x_loadings.x_loadings_.shape = (49, 4), x_loadings.y_loadings_.shape = (4, 4)
     # x_loadings.shape = (49, 4), y_loadings.shape = (4, 4)
     x_loadings, y_loadings = fix_directionality(cca.x_loadings_, cca.y_loadings_)
 
-    plot_cca_loadings(x_loadings, y_loadings, data_dir + atlas_labels_filename, filtered_rois_idx)
-
-    plot_cca_component_comparison(cca)
+    plot_cca_loadings(x_loadings, y_loadings, roi_names)
 
     plot_loadings_to_brain_niftis(data_dir, atlas_labels_filename, x_loadings, zscore=False, filtered_rois=filtered_rois_idx)
 
+    random_permutation_roi_pvalue(cca.x_loadings_, X_upd, Y_upd, roi_names)
+
+    # plot_cca_component_comparison(x_loadings)
+
     # permutation_test(cca, X_upd, Y_upd)
-    #
+
     # recons_brain_region_lesion_volumes = create_modewise_brain_maps(cca.x_scores_, cca.x_loadings_)  # (3, 1154, 161)
     # create_niftis_from_lesion_maps(recons_brain_region_lesion_volumes, data_dir, atlas_labels_filename, smooth_image=False)
 
@@ -548,9 +597,9 @@ if __name__ == "__main__":
     parser.add_argument("--atlas_labels_filename", default="llm/cca/combined_atlas_region_labels_05102020.npy")
 
     parser.add_argument("--use_pc100", default=False)  # False for atlas ROI lesion load matrix
-    parser.add_argument("--use_select_rois", default=False)  # whether to only use select ROIs provided by SVR-ROI analysis
+    parser.add_argument("--use_select_rois", default=True)  # whether to only use select ROIs provided by SVR-ROI analysis
     parser.add_argument("--deconfounded_by_colabs", default=True)  # whether to use already deconfounded data from collaborators
-    parser.add_argument("--also_deconfound_infarct_volume", default=False)
+    parser.add_argument("--also_deconfound_infarct_volume", default=True)
     parser.add_argument("--r_cca", default=False)  # whether to use RCCA or otherwise sklearn's CCA
     parser.add_argument("--n_components", default=4)  # No. of CCA components
 
