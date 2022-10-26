@@ -475,6 +475,7 @@ def random_permutation_roi_pvalue(x_loadings, X, Y, roi_names):
     x_loadings_perm = []
 
     for i_iter in range(n_permutations):
+        # logging progress
         if i_iter % 50 == 0:
             print(i_iter + 1)
 
@@ -483,6 +484,7 @@ def random_permutation_roi_pvalue(x_loadings, X, Y, roi_names):
         for i in range(n_comp):
             Y_perm[:, i] = perm_rs.permutation(Y[:, i])
 
+        # fitting CCA on randomly permuted language scores
         cca_perm = CCA(n_components=n_comp, scale=False).fit(X, Y_perm)
 
         x_loadings_perm.append(cca_perm.x_loadings_)
@@ -496,11 +498,14 @@ def random_permutation_roi_pvalue(x_loadings, X, Y, roi_names):
 
             target_weight = x_loadings[i_roi, i_mode]
 
+            # right tail
             if target_weight > 0:
                 pvals[i_roi, i_mode] = np.count_nonzero(x_loadings_perm[:, i_roi, i_mode] >= target_weight) / n_permutations
+            # left tail
             else:
                 pvals[i_roi, i_mode] = np.count_nonzero(x_loadings_perm[:, i_roi, i_mode] <= target_weight) / n_permutations
 
+    # storing p-values in excel
     writer = pd.ExcelWriter("p_values.xlsx")
 
     roi_df = pd.DataFrame(roi_names, columns=["ROI"])
