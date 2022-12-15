@@ -476,8 +476,10 @@ def random_permutation_roi_pvalue(x_loadings, X, Y, roi_names):
 
     for i_iter in range(n_permutations):
         # logging progress
-        if i_iter % 50 == 0:
-            print(i_iter + 1)
+        if i_iter == 0:
+            print("Iteration #:", 0)
+        elif (i_iter + 1) % 50 == 0:
+            print("Iteration #:", i_iter + 1)
 
         # permuting each language score / column
         Y_perm = np.empty(Y.shape)
@@ -492,18 +494,22 @@ def random_permutation_roi_pvalue(x_loadings, X, Y, roi_names):
     x_loadings_perm = np.array(x_loadings_perm)
     pvals = np.empty(x_loadings.shape)
 
+    # corrected for multiple comparisons by taking maximum statistic (weight) per mode
+    pvals_corrected = np.empty(x_loadings.shape)
+
+    x_loadings_perm_abs = np.abs(x_loadings_perm)
+    null_distribution_corrected = np.max(x_loadings_perm_abs, axis=1)
+
     for i_roi in range(x_loadings.shape[0]):
 
         for i_mode in range(x_loadings.shape[1]):
 
-            target_weight = x_loadings[i_roi, i_mode]
+            target_weight = np.abs(x_loadings[i_roi, i_mode])
 
-            # right tail
-            if target_weight > 0:
-                pvals[i_roi, i_mode] = np.count_nonzero(x_loadings_perm[:, i_roi, i_mode] >= target_weight) / n_permutations
-            # left tail
-            else:
-                pvals[i_roi, i_mode] = np.count_nonzero(x_loadings_perm[:, i_roi, i_mode] <= target_weight) / n_permutations
+            null_distribution = x_loadings_perm_abs[:, i_roi, i_mode]
+            pvals[i_roi, i_mode] = np.count_nonzero(null_distribution >= target_weight) / n_permutations
+
+            pvals_corrected[i_roi, i_mode] = np.count_nonzero(null_distribution_corrected[:, i_mode] >= target_weight) / n_permutations
 
     # storing p-values in excel
     writer = pd.ExcelWriter("p_values.xlsx")
@@ -511,13 +517,14 @@ def random_permutation_roi_pvalue(x_loadings, X, Y, roi_names):
     roi_df = pd.DataFrame(roi_names, columns=["ROI"])
     for i_mode in range(pvals.shape[1]):
         roi_df["Mode " + str(i_mode + 1)] = pvals[:, i_mode]
+        roi_df["Mode " + str(i_mode + 1) + " (Corrected)"] = pvals_corrected[:, i_mode]
     roi_df.index += 1
     roi_df.to_excel(writer)
 
     writer.save()
     writer.close()
 
-    return pvals
+    return pvals, pvals_corrected
 
 
 def main(args):
